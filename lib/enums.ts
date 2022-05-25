@@ -22,6 +22,7 @@ export enum SerializationType {
 	Binary = "binary",
 	BinaryUTF8 = "binary-utf8",
 	JSON = "json",
+	MessagePack = "messagepack",
 }
 
 export enum SocketEventType {

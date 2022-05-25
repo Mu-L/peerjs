@@ -182,6 +182,7 @@
 		"typescript": "^4.5.5"
 	},
 	"dependencies": {
+		"@msgpack/msgpack": "^2.7.2",
 		"@swc/helpers": "^0.4.0",
 		"eventemitter3": "^4.0.7",
 		"peerjs-js-binarypack": "1.0.1",

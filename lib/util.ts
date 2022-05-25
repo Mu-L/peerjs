@@ -104,11 +104,10 @@ class Util {
 
 	private _dataCount: number = 1;
 
-	chunk(
-		blob: Blob,
-	): { __peerData: number; n: number; total: number; data: Blob }[] {
-		const chunks = [];
-		const size = blob.size;
+	*chunk<T extends Blob|Uint8Array>(
+		blob: T,
+	) {
+		const size = blob instanceof Blob ? blob.size : blob.length;
 		const total = Math.ceil(size / util.chunkedMTU);
 
 		let index = 0;
@@ -125,15 +124,12 @@ class Util {
 				total,
 			};
 
-			chunks.push(chunk);
+			yield chunk;
 
 			start = end;
 			index++;
 		}
-
 		this._dataCount++;
-
-		return chunks;
 	}
 
 	blobToArrayBuffer(

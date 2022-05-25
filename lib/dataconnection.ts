@@ -7,6 +7,7 @@ import { BaseConnection } from "./baseconnection";
 import { ServerMessage } from "./servermessage";
 import { EncodingQueue } from "./encodingQueue";
 import type { DataConnection as IDataConnection } from "./dataconnection";
+import { encode, decode } from "@msgpack/msgpack";
 
 type DataConnectionEvents = {
 	/**
@@ -48,6 +49,15 @@ export class DataConnection
 			data: Blob[];
 			count: number;
 			total: number;
+		};
+	} = {};
+
+	private _chunkedBufferData: {
+		[id: number]: {
+			data: Uint8Array;
+			count: number;
+			total: number;
+			length: number;
 		};
 	} = {};
 
@@ -134,6 +144,16 @@ export class DataConnection
 			this.serialization === SerializationType.BinaryUTF8;
 
 		let deserializedData: any = data;
+		if (
+			this.serialization === SerializationType.MessagePack &&
+			data instanceof ArrayBuffer
+		) {
+			deserializedData = decode(data);
+			if (deserializedData.__peerData) {
+				this._handleMsgPackChunk(deserializedData);
+				return;
+			}
+		}
 
 		if (isBinarySerialization) {
 			if (datatype === Blob) {
@@ -188,6 +208,35 @@ export class DataConnection
 			// We've received all the chunks--time to construct the complete data.
 			const data = new Blob(chunkInfo.data);
 			this._handleDataMessage({ data });
+		}
+	}
+	private _handleMsgPackChunk(data: {
+		__peerData: number;
+		n: number;
+		total: number;
+		data: Uint8Array;
+	}): void {
+		logger.log(
+			`DC#${this.connectionId} Got chunk ${data.n} of ${data.total}.`,
+		);
+		const id = data.__peerData;
+		const chunkInfo = this._chunkedBufferData[id] || {
+			data: new Uint8Array(new ArrayBuffer(data.total * util.chunkedMTU)),
+			count: 0,
+			total: data.total,
+			length: 0,
+		};
+		chunkInfo.data.set(data.data, data.n * util.chunkedMTU);
+		chunkInfo.length += data.data.length;
+		chunkInfo.count++;
+		this._chunkedBufferData[id] = chunkInfo;
+
+		if (chunkInfo.total === chunkInfo.count) {
+			// Clean up before making the recursive call to `_handleDataMessage`.
+			delete this._chunkedBufferData[id];
+			const view = chunkInfo.data.subarray(0, chunkInfo.length);
+
+			super.emit("data", decode(view));
 		}
 	}
 
@@ -266,6 +315,15 @@ export class DataConnection
 			} else {
 				this._bufferedSend(blob);
 			}
+		} else if (this.serialization === SerializationType.MessagePack) {
+			const blob = encode(data);
+
+			if (!chunked && blob.length > util.chunkedMTU) {
+				this._sendChunks(blob);
+				return;
+			}
+
+			this._bufferedSend(blob);
 		} else {
 			this._bufferedSend(data);
 		}
@@ -327,11 +385,13 @@ export class DataConnection
 		}
 	}
 
-	private _sendChunks(blob: Blob): void {
+	private _sendChunks(blob: Blob| Uint8Array): void {
 		const blobs = util.chunk(blob);
-		logger.log(`DC#${this.connectionId} Try to send ${blobs.length} chunks...`);
 
 		for (let blob of blobs) {
+			logger.log(
+				`DC#${this.connectionId} Try to send ${blob.n} of ${blob.total}.`,
+			);
 			this.send(blob, true);
 		}
 	}
